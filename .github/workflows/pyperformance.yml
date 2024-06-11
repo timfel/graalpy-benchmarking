@@ -10,21 +10,20 @@ on:
         options:
           - "self-hosted-macos-aarch64"
           - "self-hosted-linux-amd64"
-      python:
-        type: string
-        required: true
-        default: 'graalpy-24.0'
-        description: Select python
-      pyperformance_extra_args:
+      extra_args:
         type: string
         default: ""
         required: false
 
-# ensure we build everything locally, using wheel builds and allowing the wheel cache to be used
 env:
+  PYPERFORMANCE_VERSION: "1.0.6"
+  # list of benchmarks to exclude because they don't work on graalpy
+  BMS: "-2to3,-python_startup,-python_startup_no_site,-sqlalchemy_declarative,-sqlalchemy_imperative"
+  # ensure we build everything locally, using wheel builds and allowing the wheel cache to be used
   PIP_NO_BINARY: ":all:"
   PIP_USE_FEATURE: "no-binary-enable-wheel-cache"
   PIP_USE_PEP517: 1
+  ENVVARS: "LD_LIBRARY_PATH,HTTP_PROXY,HTTPS_PROXY,NO_PROXY,http_proxy,https_proxy,no_proxy,PIP_NO_BINARY,PIP_USE_FEATURE,PIP_USE_PEP517"
 
 jobs:
   run_benchmarks:
@@ -33,15 +32,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ inputs.python }}
-          cache: 'pip' # caching pip dependencies
-      - run: pip install pyperformance==1.11.0
-      - run: pyperformance run --inherit-environ LD_LIBRARY_PATH,PIP_NO_BINARY,PIP_USE_FEATURE,PIP_USE_PEP517 -r -o ${{ inputs.python }}.json ${{ inputs.pyperformance_extra_args }}
-      - run: cat ${{ inputs.python }}.json
-      - name: Store results
-        if: '!cancelled()'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.python }}.json
-          path: ${{ inputs.python }}.json
-          if-no-files-found: error
+          python-version: |
+            graalpy-24.0
+            3.10
+      # install pyperformance on all pythons we want to test
+      - run: graalpy -m pip install pyperformance==$PYPERFORMANCE_VERSION
+      - run: python3 -m pip install pyperformance==$PYPERFORMANCE_VERSION
+      # run benchmarks on all pythons
+      - run: graalpy -m pyperformance run --benchmarks="$BMS" --inherit-environ $ENVVARS -r -o graalpy.json ${{ inputs.extra_args }}
+      - run: python3 -m pyperformance run --benchmarks="$BMS" --inherit-environ $ENVVARS -r -o cpython.json ${{ inputs.extra_args }}
+      # compare
+      - run: python3 -m pyperf compare_to cpython.json graalpy.json
